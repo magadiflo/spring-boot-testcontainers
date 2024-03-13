@@ -380,3 +380,258 @@ $ curl -v -X POST -H "Content-Type: application/json" -d "{\"name\": \"martin\",
   "email": "martin@gmail.com"
 }
 ````
+
+---
+
+# Escribiendo Test Para EndPoints API REST
+
+---
+
+Empezaremos a escribir las pruebas a los distintos endpoints de nuestra aplicación, pero para eso, primero debemos
+agregar las siguientes dependencias:
+
+````xml
+
+<dependencies>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-testcontainers</artifactId>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>junit-jupiter</artifactId>
+        <scope>test</scope>
+    </dependency>
+    <dependency>
+        <groupId>org.testcontainers</groupId>
+        <artifactId>postgresql</artifactId>
+        <scope>test</scope>
+    </dependency>
+</dependencies>
+````
+
+Utilizando `Spring Initializr` y teniendo las dependencias iniciales aún en la web, agregamos una dependencia más,
+me refiero a la dependencia `Testcontainers`, al agregar dicha dependencia, en automático se agregan dos dependencias
+más: `junit-jupiter` y `postgresql`, ambos con **groupId** `org.testcontainers`.
+
+**La dependencia `Testcontainers` proporcione instancias ligeras y desechables de bases de datos comunes,
+navegadores web Selenium o cualquier otra cosa que pueda ejecutarse en un contenedor Docker.**
+
+## Creando recursos de test
+
+Crearemos el directorio **resources** de esta manera `src/test/resources`, dentro de él crearemos los `scripts` para
+la creación de la tabla y poblamiento de datos en la base de datos de test.
+
+`src/test/resources/schema.sql`
+
+````sql
+CREATE TABLE IF NOT EXISTS customers(
+    id BIGSERIAL PRIMARY KEY,
+    name VARCHAR NOT NULL,
+    email VARCHAR NOT NULL UNIQUE
+);
+````
+
+`src/test/resources/data.sql`
+
+````sql
+TRUNCATE TABLE customers RESTART IDENTITY;
+
+INSERT INTO customers(name, email)
+VALUES('María Briones', 'maria.briones@gmail.com'),
+('Karito Casanova', 'karito.casanova@gmail.com'),
+('Luis Castillo', 'luis.castillo@gmail.com'),
+('Diego Campomanes', 'diego.campomanes@gmail.com'),
+('Alexander Villanueva', 'alexander.villanueva@gmail.com');
+````
+
+## Escribiendo Test al controlador CustomerRestController
+
+Nos ubicamos dentro del controlador `CustomerRestController` y presionamos `Ctrl + Shift + T` y `Create New Test...`,
+con esto se nos creará una clase de prueba para nuestro controlador.
+
+Pero para iniciar con éxito nuestro contexto Spring necesitamos una base de datos Postgres en funcionamiento y
+configurar el contexto para comunicarse con esa base de datos. `Aquí es donde Testcontainers entra en escena`.
+
+Podemos usar la biblioteca `Testcontainers` para activar una instancia de base de datos Postgres como un contenedor
+Docker y configurar la aplicación para comunicarse con esa base de datos de la siguiente manera:
+
+````java
+
+@Sql(scripts = {"/data.sql"}, executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+class CustomerRestControllerTest {
+    private static final PostgreSQLContainer<?> POSTGRES_CONTAINER = new PostgreSQLContainer<>("postgres:15.2-alpine");
+    private static final String CUSTOMERS_ENDPOINT_PATH = "/api/v1/customers";
+    @Autowired
+    private TestRestTemplate restTemplate;
+
+    @BeforeAll
+    static void beforeAll() {
+        POSTGRES_CONTAINER.start();
+    }
+
+    @AfterAll
+    static void afterAll() {
+        POSTGRES_CONTAINER.stop();
+    }
+
+    @DynamicPropertySource
+    static void configureProperties(DynamicPropertyRegistry registry) {
+        registry.add("spring.datasource.url", POSTGRES_CONTAINER::getJdbcUrl);
+        registry.add("spring.datasource.username", POSTGRES_CONTAINER::getUsername);
+        registry.add("spring.datasource.password", POSTGRES_CONTAINER::getPassword);
+    }
+
+    @Test
+    void connectionEstablished() {
+        Assertions.assertThat(POSTGRES_CONTAINER.isCreated()).isTrue();
+        Assertions.assertThat(POSTGRES_CONTAINER.isRunning()).isTrue();
+    }
+
+    @Test
+    void shouldGetAllCustomers() {
+        Customer[] customersResponse = this.restTemplate.getForObject(CUSTOMERS_ENDPOINT_PATH, Customer[].class);
+        Assertions.assertThat(customersResponse.length).isEqualTo(5);
+    }
+
+    @Test
+    void shouldFindCustomerWhenValidCustomerId() {
+        ResponseEntity<Customer> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH + "/{id}", HttpMethod.GET, null, Customer.class, Collections.singletonMap("id", 1));
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Assertions.assertThat(response.getBody()).isNotNull();
+    }
+
+    @Test
+    void shouldFindCustomerWhenEmailIsValid() {
+        ResponseEntity<Customer> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH + "/email/{email}", HttpMethod.GET, null, Customer.class, Collections.singletonMap("email", "karito.casanova@gmail.com"));
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Assertions.assertThat(response.getBody()).isNotNull();
+    }
+
+    @Test
+    void shouldThrowNotFoundWhenEmailIsInvalid() {
+        ResponseEntity<Customer> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH + "/email/{email}", HttpMethod.GET, null, Customer.class, Collections.singletonMap("email", "karito.casanova@outlook.com"));
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void shouldCreateNewCustomer() {
+        Customer customerRequest = Customer.builder()
+                .name("Rosita Pardo")
+                .email("rosita.pardo@gmail.com")
+                .build();
+        ResponseEntity<Customer> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH, HttpMethod.POST, new HttpEntity<>(customerRequest), Customer.class);
+
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        Assertions.assertThat(response.getBody()).isNotNull();
+        Assertions.assertThat(response.getBody().getId()).isEqualTo(6);
+        Assertions.assertThat(response.getBody().getName()).isEqualTo(customerRequest.getName());
+        Assertions.assertThat(response.getBody().getEmail()).isEqualTo(customerRequest.getEmail());
+    }
+
+    @Test
+    void shouldUpdateCustomerWhenCustomerIsValid() {
+        Customer customerToUpdate = Customer.builder()
+                .name("Karol Casanova Mas Naa")
+                .email("karito.casanova@outlook.com")
+                .build();
+        ResponseEntity<Customer> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH + "/{id}", HttpMethod.PUT, new HttpEntity<>(customerToUpdate), Customer.class, Collections.singletonMap("id", 1));
+
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Assertions.assertThat(response.getBody()).isNotNull();
+        Assertions.assertThat(response.getBody().getId()).isEqualTo(1);
+        Assertions.assertThat(response.getBody().getName()).isEqualTo(customerToUpdate.getName());
+        Assertions.assertThat(response.getBody().getEmail()).isEqualTo(customerToUpdate.getEmail());
+    }
+
+    @Test
+    void shouldDeleteCustomerWithValidId() {
+        ResponseEntity<Void> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH + "/{id}", HttpMethod.DELETE, null, Void.class, Collections.singletonMap("id", 1));
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    }
+}
+````
+
+Entendamos qué está pasando en esta prueba.
+
+- La anotación `@Sql` se utiliza para anotar una clase de prueba o un método de prueba para configurar scripts y
+  declaraciones SQL que se ejecutarán en una base de datos determinada durante las pruebas de integración. **Esta
+  configuración nos garantizará una configuración de datos predecibles para cada prueba y evitará cualquier tipo de
+  contaminación en las pruebas.**
+
+
+- Hemos anotado la clase de prueba con la anotación `@SpringBootTest` junto con la configuración `webEnvironment`, de
+  modo que la prueba se ejecutará iniciando toda la aplicación en un puerto disponible aleatorio.
+
+
+- Hemos creado una instancia de `PostgreSQLContainer` usando la imagen de Docker `postgres:15.2-alpine`.
+  El `contenedor de Postgres se inicia` utilizando el método de devolución de llamada `JUnit 5 @BeforeAll` que se
+  ejecuta antes de ejecutar cualquier método de prueba dentro de una instancia de prueba.
+
+
+- Utilizamos el `@AfterAll`  para indicar que el método anotado debe ejecutarse después de todas las pruebas en la clase
+  de prueba actual. A diferencia de los métodos @AfterEach, los métodos `@AfterAll` solo se ejecutan una vez para una
+  clase de prueba determinada. Dentro del método anotado con `@AfterAll` usamos la función `.stop()` de la instancia de
+  `PostgreSQLContainer` para matar y retirar el contendor.
+
+
+- La base de datos de `Postgres` se ejecuta en el puerto `5432` dentro del contenedor y se asigna a
+  un `puerto disponible aleatorio` en el host.
+
+
+- Hemos registrado las propiedades de conexión de la base de datos **obtenidas dinámicamente del contenedor de
+  Postgres** utilizando `DynamicPropertyRegistry` de Spring Boot.
+
+
+- La anotación `@DynamicPropertySource` es una anotación a nivel de método para pruebas de integración que necesitan
+  agregar propiedades con valores dinámicos al conjunto de PropertySources del entorno.
+  Esta anotación y su infraestructura de soporte se diseñaron originalmente para permitir que las propiedades de las
+  pruebas basadas en `Testcontainers` se expongan fácilmente a las pruebas de integración de Spring. Sin embargo, esta
+  característica también se puede utilizar con cualquier forma de recurso externo cuyo ciclo de vida se mantenga fuera
+  del ApplicationContext de la prueba.
+  Los métodos anotados con `@DynamicPropertySource` deben ser estáticos y deben tener un único argumento
+  `DynamicPropertyRegistry` que se utiliza para agregar pares `nombre-valor` al conjunto de `PropertySources` del
+  entorno. Los valores son dinámicos y se proporcionan a través de `java.util.function.Supplier` que solo se invoca
+  cuando se resuelve la propiedad. Normalmente, las referencias de métodos se utilizan para proporcionar valores.
+
+
+- Finalmente, en cada método test hacemos uso del cliente `TestRestTemplate` con el que realizamos las
+  solicitudes `HttpRequest` y evaluamos el resultado según sea el caso.
+
+**NOTA**  
+Para ver más detalles del uso de la anotación `@Sql` visitar el siguiente proyecto
+[spring-boot-test](https://github.com/magadiflo/spring-boot-test.git)
+
+## Ejecutando tests
+
+Debería ver que el contenedor acoplable de `Postgres` está iniciado y todas las pruebas deberían `PASAR`. También puede
+observar que **después de ejecutar las pruebas, los contenedores se detienen y se eliminan automáticamente.**
+
+En la siguiente imagen vemos que al iniciar el test, nuestra aplicación se conecta a `Docker` de nuestra máquina local y
+obtiene cierta información.
+
+![01.started-tests.png](./assets/01.started-tests.png)
+
+Luego, empieza a crear el contenedor necesario para ejecutar los tests a partir de la imagen que definimos, en nuestro
+caso a partir de la imagen de postgres `postgres:15.2-alpine`:
+
+![02.creating-contianer-postgres.png](./assets/02.creating-contianer-postgres.png)
+
+A continuación empieza a iniciarse la aplicación, observar que para la realización de estas pruebas la aplicación se
+está iniciando en un puerto aleatorio `55655`:
+
+![starter application](./assets/03.starter-application.png)
+
+Finalmente, vemos que todos los tests es han ejecutado exitosamente:
+
+![04.finished-tests.png](./assets/04.finished-tests.png)
+
+## Resumen
+
+La biblioteca `Testcontainers` nos ayudó a escribir pruebas de integración utilizando el mismo tipo de base de datos,
+`Postgres`, que usamos en producción en lugar de Mocks o bases de datos en memoria.
+
+Para obtener más información sobre Testcontainers, visite http://testcontainers.com
+
