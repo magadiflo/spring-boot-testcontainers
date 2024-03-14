@@ -446,7 +446,7 @@ VALUES('María Briones', 'maria.briones@gmail.com'),
 ('Alexander Villanueva', 'alexander.villanueva@gmail.com');
 ````
 
-## Escribiendo Test al controlador CustomerRestController
+## Configuración Manual - Escribiendo Test al controlador CustomerRestController
 
 Nos ubicamos dentro del controlador `CustomerRestController` y presionamos `Ctrl + Shift + T` y `Create New Test...`,
 con esto se nos creará una clase de prueba para nuestro controlador.
@@ -458,10 +458,16 @@ Podemos usar la biblioteca `Testcontainers` para activar una instancia de base d
 Docker y configurar la aplicación para comunicarse con esa base de datos de la siguiente manera:
 
 ````java
-
+/**
+ * Configuración Manual
+ * ********************
+ * <p>
+ * Somos nosotros los que le decimos cuándo debemos iniciar el contenedor, cuándo detenerse
+ * y además agregar ciertas configuraciones dinámicas usando la anotación @DynamicPropertySource
+ */
 @Sql(scripts = {"/data.sql"}, executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class CustomerRestControllerTest {
+class CustomerRestControllerManualConfigTest {
     private static final PostgreSQLContainer<?> POSTGRES_CONTAINER = new PostgreSQLContainer<>("postgres:15.2-alpine");
     private static final String CUSTOMERS_ENDPOINT_PATH = "/api/v1/customers";
     @Autowired
@@ -469,12 +475,12 @@ class CustomerRestControllerTest {
 
     @BeforeAll
     static void beforeAll() {
-        POSTGRES_CONTAINER.start();
+        POSTGRES_CONTAINER.start(); // Le indicamos que debe iniciar el contenedor
     }
 
     @AfterAll
     static void afterAll() {
-        POSTGRES_CONTAINER.stop();
+        POSTGRES_CONTAINER.stop();  // Le indicamos que debe detener el contenedor y eliminarlo
     }
 
     @DynamicPropertySource
@@ -595,6 +601,24 @@ Entendamos qué está pasando en esta prueba.
   `DynamicPropertyRegistry` que se utiliza para agregar pares `nombre-valor` al conjunto de `PropertySources` del
   entorno. Los valores son dinámicos y se proporcionan a través de `java.util.function.Supplier` que solo se invoca
   cuando se resuelve la propiedad. Normalmente, las referencias de métodos se utilizan para proporcionar valores.
+  <br><br>
+  A continuación mostramos el trozo de código donde hacemos uso de la configuración del datasource de prueba:
+
+  ````java
+  
+  @DynamicPropertySource
+  static void configureProperties(DynamicPropertyRegistry registry) {
+      registry.add("spring.datasource.url", POSTGRES_CONTAINER::getJdbcUrl);
+      registry.add("spring.datasource.username", POSTGRES_CONTAINER::getUsername);
+      registry.add("spring.datasource.password", POSTGRES_CONTAINER::getPassword);
+  }
+  ````
+  Se muestra a continuación los valores que toman cada `get`:
+
+    - **getJdbcUrl**,  `jdbc:postgresql://localhost:61126/test?loggerLevel=OFF`, donde el puerto es aleatorio, es decir,
+      cambiará con cada ejecución de pruebas. Notar que el nombre de la base de datos que se crea es `test`.
+    - **getUsername**, devuelve el valor `test`.
+    - **getPassword**, devuelve el valor `test`.
 
 
 - Finalmente, en cada método test hacemos uso del cliente `TestRestTemplate` con el que realizamos las
@@ -620,7 +644,7 @@ caso a partir de la imagen de postgres `postgres:15.2-alpine`:
 ![02.creating-contianer-postgres.png](./assets/02.creating-contianer-postgres.png)
 
 A continuación empieza a iniciarse la aplicación, observar que para la realización de estas pruebas la aplicación se
-está iniciando en un puerto aleatorio `55655`:
+está iniciando en un puerto aleatorio `62287`:
 
 ![starter application](./assets/03.starter-application.png)
 

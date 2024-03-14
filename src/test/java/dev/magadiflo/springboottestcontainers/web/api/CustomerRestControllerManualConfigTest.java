@@ -20,9 +20,17 @@ import org.testcontainers.containers.PostgreSQLContainer;
 
 import java.util.Collections;
 
+/**
+ * Configuración Manual
+ * ********************
+ * <p>
+ * Somos nosotros los que le decimos cuándo debemos iniciar el contenedor, cuándo detenerse
+ * y además agregar ciertas configuraciones dinámicas usando la anotación @DynamicPropertySource
+ */
+
 @Sql(scripts = {"/data.sql"}, executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD)
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-class CustomerRestControllerTest {
+class CustomerRestControllerManualConfigTest {
     private static final PostgreSQLContainer<?> POSTGRES_CONTAINER = new PostgreSQLContainer<>("postgres:15.2-alpine");
     private static final String CUSTOMERS_ENDPOINT_PATH = "/api/v1/customers";
     @Autowired
