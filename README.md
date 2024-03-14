@@ -483,6 +483,8 @@ class CustomerRestControllerManualConfigTest {
         POSTGRES_CONTAINER.stop();  // Le indicamos que debe detener el contenedor y eliminarlo
     }
 
+    // Anotación a nivel de método para pruebas de integración que necesitan agregar 
+    // propiedades con valores dinámicos al conjunto de PropertySources del entorno.
     @DynamicPropertySource
     static void configureProperties(DynamicPropertyRegistry registry) {
         registry.add("spring.datasource.url", POSTGRES_CONTAINER::getJdbcUrl);
@@ -659,3 +661,129 @@ La biblioteca `Testcontainers` nos ayudó a escribir pruebas de integración uti
 
 Para obtener más información sobre Testcontainers, visite http://testcontainers.com
 
+## Configuración Automática - Escribiendo Test al controlador CustomerRestController
+
+En este apartado utilizaremos los mismos métodos de pruebas creados en el apartado anterior, **lo que va a cambiar es
+la forma en la que vamos a configurar la clase de prueba para que usemos las configuraciones automáticas** del
+`Testcontainer`.
+
+````java
+/**
+ * Configuración Automática
+ * ************************
+ * <p>
+ * Utilizando la anotación @Testcontainers, @Container y @ServiceConnection (a partir de la versión +3.1)
+ */
+@Testcontainers
+@Sql(scripts = {"/data.sql"}, executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD)
+@SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
+class CustomerRestControllerAutomaticConfigTest {
+
+    @Container
+    @ServiceConnection
+    private static final PostgreSQLContainer<?> POSTGRES_CONTAINER = new PostgreSQLContainer<>("postgres:15.2-alpine");
+    private static final String CUSTOMERS_ENDPOINT_PATH = "/api/v1/customers";
+    @Autowired
+    private TestRestTemplate restTemplate;
+
+    @Test
+    void connectionEstablished() {
+        Assertions.assertThat(POSTGRES_CONTAINER.isCreated()).isTrue();
+        Assertions.assertThat(POSTGRES_CONTAINER.isRunning()).isTrue();
+    }
+
+    @Test
+    void shouldGetAllCustomers() {
+        Customer[] customersResponse = this.restTemplate.getForObject(CUSTOMERS_ENDPOINT_PATH, Customer[].class);
+        Assertions.assertThat(customersResponse.length).isEqualTo(5);
+    }
+
+    @Test
+    void shouldFindCustomerWhenValidCustomerId() {
+        ResponseEntity<Customer> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH + "/{id}", HttpMethod.GET, null, Customer.class, Collections.singletonMap("id", 1));
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Assertions.assertThat(response.getBody()).isNotNull();
+    }
+
+    @Test
+    void shouldFindCustomerWhenEmailIsValid() {
+        ResponseEntity<Customer> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH + "/email/{email}", HttpMethod.GET, null, Customer.class, Collections.singletonMap("email", "karito.casanova@gmail.com"));
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Assertions.assertThat(response.getBody()).isNotNull();
+    }
+
+    @Test
+    void shouldThrowNotFoundWhenEmailIsInvalid() {
+        ResponseEntity<Customer> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH + "/email/{email}", HttpMethod.GET, null, Customer.class, Collections.singletonMap("email", "karito.casanova@outlook.com"));
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
+    }
+
+    @Test
+    void shouldCreateNewCustomer() {
+        Customer customerRequest = Customer.builder()
+                .name("Rosita Pardo")
+                .email("rosita.pardo@gmail.com")
+                .build();
+        ResponseEntity<Customer> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH, HttpMethod.POST, new HttpEntity<>(customerRequest), Customer.class);
+
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        Assertions.assertThat(response.getBody()).isNotNull();
+        Assertions.assertThat(response.getBody().getId()).isEqualTo(6);
+        Assertions.assertThat(response.getBody().getName()).isEqualTo(customerRequest.getName());
+        Assertions.assertThat(response.getBody().getEmail()).isEqualTo(customerRequest.getEmail());
+    }
+
+    @Test
+    void shouldUpdateCustomerWhenCustomerIsValid() {
+        Customer customerToUpdate = Customer.builder()
+                .name("Karol Casanova Mas Naa")
+                .email("karito.casanova@outlook.com")
+                .build();
+        ResponseEntity<Customer> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH + "/{id}", HttpMethod.PUT, new HttpEntity<>(customerToUpdate), Customer.class, Collections.singletonMap("id", 1));
+
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        Assertions.assertThat(response.getBody()).isNotNull();
+        Assertions.assertThat(response.getBody().getId()).isEqualTo(1);
+        Assertions.assertThat(response.getBody().getName()).isEqualTo(customerToUpdate.getName());
+        Assertions.assertThat(response.getBody().getEmail()).isEqualTo(customerToUpdate.getEmail());
+    }
+
+    @Test
+    void shouldDeleteCustomerWithValidId() {
+        ResponseEntity<Void> response = this.restTemplate.exchange(CUSTOMERS_ENDPOINT_PATH + "/{id}", HttpMethod.DELETE, null, Void.class, Collections.singletonMap("id", 1));
+        Assertions.assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    }
+}
+````
+
+Como observamos, la clase de prueba tiene los mismos métodos de test utilizados en el apartado anterior, pero en esta
+ocasión estamos usando:
+
+- `@Testcontainers`, es una extensión de JUnit Jupiter para activar el `start()` y el `stop()` automáticos de los
+  contenedores utilizados en un caso de prueba. La extensión `Testcontainers` encuentra todos los campos anotados
+  con `@Container` **y llama a sus métodos de ciclo de vida de contenedor.** `Los contenedores declarados como campos
+  estáticos se compartirán entre los métodos de prueba`. **Se iniciarán solo una vez antes de ejecutar cualquier método
+  de prueba y se detendrán después de que se haya ejecutado el último método de prueba.** Los contenedores declarados
+  como campos de instancia se iniciarán y detendrán para cada método de prueba.<br>
+  > Entonces, gracias a la anotación `@Testcontainers` ya no usamos el `POSTGRES_CONTAINER.start()`
+  > y `POSTGRES_CONTAINER.stop()` definidos en los métodos `@BeforeAll` y `@AfterAll` respectivamente, tal como lo
+  > hicimos en la clase de test `CustomerRestControllerManualConfigTest`.
+
+
+- `@Container`, se utiliza junto con la anotación `Testcontainers` para marcar los contenedores que deben ser
+  administrados por la extensión `Testcontainers`.
+
+
+- `@ServiceConnection`, anotación utilizada para indicar que un campo o método es un `ContainerConnectionSource` que
+  proporciona un servicio al que se puede conectar.<br>
+  > Gracias a esta anotación nos libramos de agregar la anotación `@DynamicPropertySource` a un método que recibe
+  > por parámetro un `DynamicPropertyRegistry` e internamente configuraríamos la `url`, `username` y `password`.
+  > Es importante tener en cuenta que esta anotación está disponible a partir de Spring Boot +3.1, para versiones
+  > anteriores a él, sí o sí debemos usar la anotación `@DynamicPropertySource` similar a lo que hicimos en la clase
+  > de test `CustomerRestControllerManualConfigTest`.
+
+## Ejecutando test con configuraciones automáticas
+
+Ejecutamos la clase `CustomerRestControllerAutomaticConfigTest` y vemos que todo funciona correctamente:
+
+![automatic-config-test.png](./assets/05.automatic-config-test.png)
