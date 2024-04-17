@@ -89,11 +89,17 @@ spring:
 
 logging:
   level:
-    org.hibernate.SQL: DEBUG            # Permite ver la consulta SQL en consola
-    org.hibernate.orm.jdbc.bind: TRACE  # Permite ver los parámetros de la consulta SQL
+    org.hibernate.SQL: DEBUG                          # Permite ver la consulta SQL en consola
+    org.hibernate.orm.jdbc.bind: TRACE                # Permite ver los parámetros de la consulta SQL
+    org.springframework.jdbc.datasource.init: DEBUG   # Permite ver qué declaraciones SQL se están ejecutando
 ````
 
-## Agregando script de creación de squema y poblamiento de tabla
+**NOTA**
+> La configuración `logging.level.org.springframework.jdbc.datasource.init=DEBUG` es muy importante, puesto que nos
+> permitirá ver qué `scripts y qué sentencias sql` (`schema.sql` y `data.sql`) se han ejecutado. Más
+> adelante veremos un ejemplo para que quede más claro.
+
+## Agregando script de creación de esquema y poblamiento de tabla
 
 Como no utilizamos ninguna base de datos en memoria, necesitamos crear las tablas de la base de datos de Postgres de
 alguna manera. El enfoque recomendado es utilizar alguna herramienta de migración de bases de datos como `Flyway` o
@@ -446,6 +452,27 @@ VALUES('María Briones', 'maria.briones@gmail.com'),
 ('Alexander Villanueva', 'alexander.villanueva@gmail.com');
 ````
 
+**NOTA**
+
+> En los archivos `data.sql` es muy importante colocar la instrucción `TRUNCATE TABLE customers RESTART IDENTITY;`,
+> sobre todo, si es que tenemos dos archivos `data.sql`, uno en el path `/main/resources/data.sql` y otro en el
+> `/test/resources/data.sql`.
+>
+> **Recordemos:**
+>
+> `/main/resources/data.sql`, este archivo nos va a permitir poblar nuestra base de datos en desarrollo, es decir,
+> cuando estemos realizando alguna funcionalidad, vamos a querer probar nuestro avance, y para eso necesitamos datos que
+> serán pobladas desde este archivo.
+>
+> `/test/resources/data.sql`, este archivo contendrá datos para poblar la base de datos de test, es decir, cuando
+> hayamos creado nuestras pruebas de integración, necesitaremos ciertos datos para ejecutar nuestros test siendo este
+> el archivo de donde obtendremos dichos datos.
+>
+> Entonces, utilizar la instrucción `TRUNCATE TABLE customers RESTART IDENTITY;` en el archivo `data.sql` va a ser muy
+> importante, ya que así nos aseguraremos de que nuestra base de datos de `test` tendrá únicamente los datos del
+> del archivo `/test/resources/data.sql`. Si no colocamos dicha instrucción, los datos del archivo `data.sql` principal
+> también se van a poblar en la base de datos de test y eso no es lo que queremos.
+
 ## Configuración Manual - Escribiendo Test al controlador CustomerRestController
 
 Nos ubicamos dentro del controlador `CustomerRestController` y presionamos `Ctrl + Shift + T` y `Create New Test...`,
@@ -653,6 +680,40 @@ está iniciando en un puerto aleatorio `62287`:
 Finalmente, vemos que todos los tests es han ejecutado exitosamente:
 
 ![04.finished-tests.png](./assets/04.finished-tests.png)
+
+## Viendo ejecución de la configuración org.springframework.jdbc.datasource.init: DEBUG
+
+**NOTA**
+> Este apartado es una actualización que hice a esta documentación y al proyecto, dado que agregué la configuración
+> `logging.level.org.springframework.jdbc.datasource.init=DEBUG` en el archivo principal `application.yml` como
+> parte de la actualización de este documento.
+
+Recordemos que en apartados superiores agregué la configuración
+`logging.level.org.springframework.jdbc.datasource.init=DEBUG` al `application.yml` principal. Esta configuración nos
+permitirá ver qué script y qué sentencia sql se está ejecutando.
+
+Recordemos además, que tenemos dos archivos `data.sql` y `schema.sql`, quienes se encuentra en el `/main/resources`
+y el otro par en el `/test/resources`. Cuando ejecutemos los test, en consola veremos la secuencia de ejecución de
+dichos archivos.
+
+Observando la imagen inferior podemos ver que primero se ejecuta el archivo `schema.sql` del `/main/resources`
+y luego el `schema.sql` del `/test/resources`. A continuación, se ejecuta el archivo `data.sql` del
+`/main/resources` y luego el `data.sql` del `/test/resources`, es por eso que requerimos usar la instrucción
+`TRUNCATE` para que elimine los datos poblados del archivo `/main/resources/data.sql` y la instrucción
+`RESTART IDENTITY` para reiniciar la tabla, de esa manera, tendremos poblado nuestra base de datos de test únicamente
+con los datos del archivo `/test/resources/data.sql`.
+
+![06.show-script-data.png](./assets/06.show-script-data.png)
+
+Como la clase de prueba tiene la configuración `executionPhase = Sql.ExecutionPhase.BEFORE_TEST_METHOD`, veremos en
+consola que el archivo `/test/resources/data.sql` se va a ejecutar tantas veces como métodos de test tenga la
+clase de prueba.
+
+![07.show-script-data.png](./assets/07.show-script-data.png)
+
+Aquí observamos nuevamente la ejecución del archivo `/test/resources/data.sql`:
+
+![08.show-script-data.png](./assets/08.show-script-data.png)
 
 ## Resumen
 
