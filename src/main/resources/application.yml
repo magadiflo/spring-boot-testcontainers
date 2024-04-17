@@ -25,3 +25,4 @@ logging:
   level:
     org.hibernate.SQL: DEBUG
     org.hibernate.orm.jdbc.bind: TRACE
+    org.springframework.jdbc.datasource.init: DEBUG
